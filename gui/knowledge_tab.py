@@ -1,4 +1,6 @@
 """文献知识库管理 - GUI 标签页"""
+import os
+import logging
 from pathlib import Path
 from typing import List, Dict, Any
 
@@ -6,11 +8,14 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QProgressBar,
-    QMessageBox, QTextEdit, QSplitter, QAbstractItemView, QMenu,
+    QMessageBox, QTextEdit, QSplitter, QAbstractItemView, QMenu, QCheckBox,
+    QApplication,
 )
 
 from core.knowledge.knowledge_base import KnowledgeBase
 from gui.workers import Worker
+
+logger = logging.getLogger(__name__)
 
 
 class KnowledgeTab(QWidget):
@@ -26,7 +31,28 @@ class KnowledgeTab(QWidget):
         self._is_processing = False
         self._auto_process = True
         self._build_ui()
+        self._preload_model()
         self.refresh_papers()
+
+    def _preload_model(self):
+        """在主线程预加载向量嵌入模型"""
+        try:
+            self.status_label.setText("正在加载向量嵌入模型...")
+            self.processing_label.setText("🔄 加载模型中...")
+            QApplication.processEvents()
+
+            if self.kb.preload_embedding_model():
+                self.status_label.setText("模型加载完成")
+                self.processing_label.setText("")
+            else:
+                self.status_label.setText("模型加载失败，请检查网络")
+                self.processing_label.setText("⚠️ 模型未就绪")
+                self.processing_label.setStyleSheet("color: #dc2626;")
+        except Exception as e:
+            logger.error(f"预加载模型失败: {e}")
+            self.status_label.setText(f"模型加载失败: {str(e)[:60]}")
+            self.processing_label.setText("⚠️ 模型未就绪")
+            self.processing_label.setStyleSheet("color: #dc2626;")
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
@@ -114,6 +140,24 @@ class KnowledgeTab(QWidget):
     def _start_processing(self):
         if not self._pending_files or self._is_processing:
             return
+
+        if not self.kb.is_model_ready():
+            self.status_label.setText("正在加载向量嵌入模型...")
+            self.processing_label.setText("🔄 加载模型中...")
+            QApplication.processEvents()
+            if not self.kb.preload_embedding_model():
+                self.processing_label.setText("⚠️ 模型未就绪")
+                self.processing_label.setStyleSheet("color: #dc2626;")
+                self.status_label.setText("模型加载失败，无法处理文件")
+                QMessageBox.warning(
+                    self, "模型未就绪",
+                    "向量嵌入模型加载失败，无法处理文献。\n"
+                    "请检查网络连接（首次运行需要下载模型），或在设置中更换模型。"
+                )
+                return
+            self.processing_label.setText("")
+            self.processing_label.setStyleSheet("color: #2563eb;")
+
         self._is_processing = True
         files = list(self._pending_files)
         self._pending_files.clear()
@@ -126,10 +170,15 @@ class KnowledgeTab(QWidget):
         worker = Worker(self.kb.add_papers_batch, files, progress_cb=True)
         worker.signals.progress.connect(self._on_progress)
         worker.signals.result.connect(self._on_process_result)
-        worker.signals.error.connect(self._on_error)
+        worker.signals.error.connect(self._on_process_error)
         worker.signals.finished.connect(self._on_processing_finished)
         self._workers.append(worker)
         worker.start()
+
+    def _on_process_error(self, msg: str):
+        logger.error(f"处理出错: {msg}")
+        self.status_label.setText(f"处理出错: {msg[:60]}")
+        self._on_error(msg)
 
     def _on_auto_process_toggled(self, checked: bool):
         self._auto_process = checked

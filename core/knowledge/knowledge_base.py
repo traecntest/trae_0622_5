@@ -1,6 +1,7 @@
 """文献知识库 - 整合 PDF 解析、向量嵌入与语义检索"""
 import os
 import re
+import logging
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -8,6 +9,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from .pdf_parser import PDFParser, ParsedPaper, PaperChunk
 from .embedding_manager import EmbeddingManager
 from .vector_db import VectorDatabase, SearchResult
+
+logger = logging.getLogger(__name__)
 
 
 class KnowledgeBase:
@@ -28,6 +31,21 @@ class KnowledgeBase:
         self.chunk_overlap = config.embedding.chunk_overlap
         self._parsed_cache: Dict[str, ParsedPaper] = {}
 
+    def preload_embedding_model(self) -> bool:
+        """预加载向量嵌入模型（建议在主线程调用，避免子线程加载崩溃）"""
+        try:
+            logger.info("正在预加载向量嵌入模型...")
+            success = self.embedder.preload_model()
+            if success:
+                logger.info("向量嵌入模型预加载完成")
+            return success
+        except Exception as e:
+            logger.error(f"预加载模型失败: {e}")
+            return False
+
+    def is_model_ready(self) -> bool:
+        return self.embedder.is_model_ready()
+
     def parse_pdf(self, pdf_path: str) -> Optional[ParsedPaper]:
         if pdf_path in self._parsed_cache:
             return self._parsed_cache[pdf_path]
@@ -36,52 +54,72 @@ class KnowledgeBase:
             self._parsed_cache[pdf_path] = paper
             return paper
         except Exception as e:
-            print(f"解析 PDF 失败 {pdf_path}: {e}")
+            logger.error(f"解析 PDF 失败 {pdf_path}: {e}")
             return None
 
     def add_paper(self, pdf_path: str,
                     progress_cb: Optional[Callable] = None) -> bool:
-        if not os.path.exists(pdf_path):
-            return False
-
-        if progress_cb:
-            progress_cb(0.1, "正在解析 PDF...")
-
-        paper = self.parse_pdf(pdf_path)
-        if not paper:
-            return False
-
         filename = Path(pdf_path).name
-        self.vector_db.delete_by_filename(filename)
+        try:
+            if not os.path.exists(pdf_path):
+                raise FileNotFoundError(f"文件不存在: {pdf_path}")
 
-        if progress_cb:
-            progress_cb(0.3, "正在分块处理...")
+            if progress_cb:
+                progress_cb(0.1, f"正在解析 PDF: {filename}")
 
-        chunks = self.parser.chunk_text(
-            paper, self.chunk_size, self.chunk_overlap
-        )
+            paper = self.parse_pdf(pdf_path)
+            if not paper:
+                raise RuntimeError(f"PDF 解析失败: {filename}")
 
-        if not chunks:
+            if progress_cb:
+                progress_cb(0.25, "正在清理旧数据...")
+
+            self.vector_db.delete_by_filename(filename)
+
+            if progress_cb:
+                progress_cb(0.35, "正在分块处理...")
+
+            chunks = self.parser.chunk_text(
+                paper, self.chunk_size, self.chunk_overlap
+            )
+
+            if not chunks:
+                raise RuntimeError(f"文本分块失败，可能 PDF 内容为空: {filename}")
+
+            if progress_cb:
+                progress_cb(0.5, "正在生成向量嵌入...")
+
+            try:
+                texts = [c.text for c in chunks]
+                embeddings = self.embedder.encode(texts)
+            except Exception as e:
+                raise RuntimeError(f"生成向量嵌入失败: {e}") from e
+
+            if embeddings is None or len(embeddings) == 0:
+                raise RuntimeError("向量嵌入结果为空")
+
+            if progress_cb:
+                progress_cb(0.8, "正在写入向量数据库...")
+
+            try:
+                metadata = paper.get_metadata()
+                self.vector_db.add_chunks(
+                    chunks, embeddings, metadata, self.embedder.dimension
+                )
+            except Exception as e:
+                raise RuntimeError(f"写入向量数据库失败: {e}") from e
+
+            if progress_cb:
+                progress_cb(1.0, f"完成: {filename}")
+
+            logger.info(f"成功添加文献到知识库: {filename} (分块数: {len(chunks)})")
+            return True
+
+        except Exception as e:
+            logger.error(f"添加文献失败 {filename}: {e}")
+            if progress_cb:
+                progress_cb(0.0, f"失败: {str(e)[:80]}")
             return False
-
-        if progress_cb:
-            progress_cb(0.5, "正在生成向量嵌入...")
-
-        texts = [c.text for c in chunks]
-        embeddings = self.embedder.encode(texts)
-
-        if progress_cb:
-            progress_cb(0.8, "正在写入向量数据库...")
-
-        metadata = paper.get_metadata()
-        self.vector_db.add_chunks(
-            chunks, embeddings, metadata, self.embedder.dimension
-        )
-
-        if progress_cb:
-            progress_cb(1.0, "完成")
-
-        return True
 
     def add_papers_batch(self, pdf_paths: List[str],
                             progress_cb: Optional[Callable] = None) -> Dict[str, bool]:

@@ -1,6 +1,10 @@
 """后台工作线程与信号管理"""
+import logging
+import traceback
 from typing import Any, Callable, Optional
 from PySide6.QtCore import QThread, Signal, QObject
+
+logger = logging.getLogger(__name__)
 
 
 class WorkerSignal(QObject):
@@ -30,9 +34,17 @@ class Worker(QThread):
             result = self.func(*self.args, **self.kwargs)
             self.signals.result.emit(result)
         except Exception as e:
-            self.signals.error.emit(str(e))
+            error_msg = f"{str(e)}"
+            logger.error(f"Worker 线程异常: {error_msg}\n{traceback.format_exc()}")
+            try:
+                self.signals.error.emit(error_msg)
+            except Exception:
+                logger.error("发送 error 信号失败")
         finally:
-            self.signals.finished.emit()
+            try:
+                self.signals.finished.emit()
+            except Exception:
+                logger.error("发送 finished 信号失败")
 
     def _progress_callback(self, *args):
         try:
@@ -46,5 +58,9 @@ class Worker(QThread):
                 return
             pct = max(0.0, min(1.0, pct))
             self.signals.progress.emit(pct, msg)
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as e:
+            logger.warning(f"进度回调参数错误: {args}, 错误: {e}")
+            return
+        except Exception as e:
+            logger.error(f"进度回调异常: {e}")
             return
