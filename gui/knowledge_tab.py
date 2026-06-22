@@ -23,6 +23,8 @@ class KnowledgeTab(QWidget):
         self.papers_list: List[Dict[str, Any]] = []
         self._pending_files: List[str] = []
         self._workers = []
+        self._is_processing = False
+        self._auto_process = True
         self._build_ui()
         self.refresh_papers()
 
@@ -52,6 +54,16 @@ class KnowledgeTab(QWidget):
         pending_bar = QHBoxLayout()
         self.pending_label = QLabel("待处理: 0 个文件")
         pending_bar.addWidget(self.pending_label)
+
+        self.auto_process_cb = QCheckBox("自动处理")
+        self.auto_process_cb.setChecked(True)
+        self.auto_process_cb.toggled.connect(self._on_auto_process_toggled)
+        pending_bar.addWidget(self.auto_process_cb)
+
+        self.processing_label = QLabel("")
+        self.processing_label.setStyleSheet("color: #2563eb;")
+        pending_bar.addWidget(self.processing_label)
+
         pending_bar.addStretch()
         layout.addLayout(pending_bar)
 
@@ -91,8 +103,38 @@ class KnowledgeTab(QWidget):
 
     def add_pending_files(self, files: List[str]):
         new_files = [f for f in files if f not in self._pending_files]
+        if not new_files:
+            return
         self._pending_files.extend(new_files)
         self.pending_label.setText(f"待处理: {len(self._pending_files)} 个文件")
+        self.status_label.setText(f"已添加 {len(new_files)} 个文件到处理队列")
+        if self._auto_process and not self._is_processing:
+            self._start_processing()
+
+    def _start_processing(self):
+        if not self._pending_files or self._is_processing:
+            return
+        self._is_processing = True
+        files = list(self._pending_files)
+        self._pending_files.clear()
+        self.pending_label.setText("待处理: 0 个文件")
+        self.process_btn.setEnabled(False)
+        self.progress_bar.setValue(0)
+        self.processing_label.setText("⚙️ 处理中...")
+        self.status_label.setText(f"正在处理 {len(files)} 个文件...")
+
+        worker = Worker(self.kb.add_papers_batch, files, progress_cb=True)
+        worker.signals.progress.connect(self._on_progress)
+        worker.signals.result.connect(self._on_process_result)
+        worker.signals.error.connect(self._on_error)
+        worker.signals.finished.connect(self._on_processing_finished)
+        self._workers.append(worker)
+        worker.start()
+
+    def _on_auto_process_toggled(self, checked: bool):
+        self._auto_process = checked
+        if checked and self._pending_files and not self._is_processing:
+            self._start_processing()
 
     def refresh_papers(self):
         self.papers_list = self.kb.list_papers()
@@ -113,21 +155,7 @@ class KnowledgeTab(QWidget):
         if not self._pending_files:
             QMessageBox.information(self, "提示", "没有待处理的文件")
             return
-
-        files = list(self._pending_files)
-        self._pending_files.clear()
-        self.pending_label.setText("待处理: 0 个文件")
-        self.process_btn.setEnabled(False)
-        self.progress_bar.setValue(0)
-        self.status_label.setText(f"正在处理 {len(files)} 个文件...")
-
-        worker = Worker(self.kb.add_papers_batch, files, progress_cb=True)
-        worker.signals.progress.connect(self._on_progress)
-        worker.signals.result.connect(self._on_process_result)
-        worker.signals.error.connect(self._on_error)
-        worker.signals.finished.connect(lambda: self.process_btn.setEnabled(True))
-        self._workers.append(worker)
-        worker.start()
+        self._start_processing()
 
     def _on_progress(self, pct: float, msg: str):
         self.progress_bar.setValue(int(pct * 100))
@@ -137,12 +165,21 @@ class KnowledgeTab(QWidget):
     def _on_process_result(self, results: Dict[str, bool]):
         self.progress_bar.setValue(100)
         success = sum(1 for v in results.values() if v)
-        self.status_label.setText(f"完成: {success}/{len(results)} 成功")
+        total = len(results)
+        self.status_label.setText(f"处理完成: {success}/{total} 成功")
         self.refresh_papers()
-        QMessageBox.information(
-            self, "处理完成",
-            f"成功处理 {success} 个文件，失败 {len(results) - success} 个。"
-        )
+        if not self._auto_process:
+            QMessageBox.information(
+                self, "处理完成",
+                f"成功处理 {success} 个文件，失败 {total - success} 个。"
+            )
+
+    def _on_processing_finished(self):
+        self._is_processing = False
+        self.process_btn.setEnabled(True)
+        self.processing_label.setText("")
+        if self._pending_files and self._auto_process:
+            self._start_processing()
 
     def _on_error(self, msg: str):
         self.status_label.setText(f"错误: {msg}")
