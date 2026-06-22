@@ -71,11 +71,11 @@ class BaseDownloader:
                         f.write(chunk)
                         downloaded += len(chunk)
                         if progress_cb and total:
-                            progress_cb(min(downloaded / total * 100))
+                            progress_cb(min(downloaded / total, 1.0))
             return str(save_path)
         except Exception as e:
             if progress_cb:
-                progress_cb(-1, str(e))
+                progress_cb(0.0, str(e))
             return None
 
 
@@ -175,13 +175,22 @@ class RetrievalAggregator:
     def download_papers(self, papers: List[PaperMeta],
                           progress_cb: Optional[Callable] = None) -> List[PaperMeta]:
         results = []
+        total = len(papers)
+        completed_count = 0
+        per_paper_progress = [0.0] * total
+
+        def update_overall():
+            if progress_cb and total > 0:
+                overall = sum(per_paper_progress) / total
+                progress_cb(overall, f"下载进度 {int(overall * 100)}% ({completed_count}/{total})")
+
         with ThreadPoolExecutor(max_workers=self.max_threads) as executor:
             futures = {}
             for i, paper in enumerate(papers):
                 def make_cb(idx):
                     def cb(pct, err=None):
-                        if progress_cb:
-                            progress_cb(idx, pct, err)
+                        per_paper_progress[idx] = max(0.0, min(1.0, pct))
+                        update_overall()
                     return cb
                 future = executor.submit(
                     self.arxiv.download_pdf,
@@ -193,7 +202,12 @@ class RetrievalAggregator:
                 local_path = future.result()
                 if local_path:
                     paper.local_path = local_path
+                completed_count += 1
+                per_paper_progress[idx] = 1.0
+                update_overall()
                 results.append(paper)
+        if progress_cb:
+            progress_cb(1.0, f"下载完成 {completed_count}/{total}")
         return results
 
     def download_single(self, url: str,

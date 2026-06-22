@@ -35,7 +35,16 @@ class Worker(QThread):
             self.signals.finished.emit()
 
     def _progress_callback(self, *args):
-        if len(args) >= 2:
-            self.signals.progress.emit(float(args[0]), str(args[1]))
-        elif len(args) == 1:
-            self.signals.progress.emit(float(args[0]), "")
+        try:
+            if len(args) >= 2 and isinstance(args[1], str):
+                pct = float(args[0])
+                msg = str(args[1])
+            elif len(args) >= 1:
+                pct = float(args[0])
+                msg = ""
+            else:
+                return
+            pct = max(0.0, min(1.0, pct))
+            self.signals.progress.emit(pct, msg)
+        except (ValueError, TypeError):
+            return

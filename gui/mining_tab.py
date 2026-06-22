@@ -192,7 +192,7 @@ class MiningTab(QWidget):
         self.progress_bar.setValue(0)
         self.status_label.setText("正在生成摘要...")
 
-        worker = Worker(self.engine.generate_summaries_batch, papers, progress_cb=lambda p, m: None)
+        worker = Worker(self.engine.generate_summaries_batch, papers, progress_cb=True)
         worker.signals.progress.connect(lambda p, m: (self.progress_bar.setValue(int(p * 100)), self.status_label.setText(m)))
         worker.signals.result.connect(self._on_summaries_done)
         worker.signals.error.connect(self._on_error)

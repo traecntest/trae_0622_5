@@ -214,7 +214,7 @@ class RetrievalTab(QWidget):
 
         worker = Worker(
             self.aggregator.download_papers, selected_papers,
-            progress_cb=lambda i, pct, err=None: None
+            progress_cb=True
         )
         worker.signals.progress.connect(self._on_download_progress)
         worker.signals.result.connect(self._on_download_result)
@@ -274,10 +274,12 @@ class RetrievalTab(QWidget):
             self.progress_bar.setValue(0)
             worker = Worker(
                 self.aggregator.download_single, url.strip(),
-                progress_cb=lambda pct, err=None: None
+                progress_cb=True
             )
+            worker.signals.progress.connect(self._on_download_progress)
             worker.signals.result.connect(lambda p: self._on_single_downloaded(p, url))
             worker.signals.error.connect(self._on_search_error)
+            worker.signals.finished.connect(lambda: None)
             self._workers.append(worker)
             worker.start()
 

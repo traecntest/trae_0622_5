@@ -121,7 +121,7 @@ class KnowledgeTab(QWidget):
         self.progress_bar.setValue(0)
         self.status_label.setText(f"正在处理 {len(files)} 个文件...")
 
-        worker = Worker(self.kb.add_papers_batch, files, progress_cb=lambda p, m: None)
+        worker = Worker(self.kb.add_papers_batch, files, progress_cb=True)
         worker.signals.progress.connect(self._on_progress)
         worker.signals.result.connect(self._on_process_result)
         worker.signals.error.connect(self._on_error)
