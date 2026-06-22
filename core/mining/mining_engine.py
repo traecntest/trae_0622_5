@@ -58,8 +58,30 @@ class MiningEngine:
         lines = ["# 科研项目分析报告\n"]
         lines.append(f"_共分析 {len(summaries)} 篇文献_\n")
 
+        lines.append("\n## 一、文献结构化摘要\n")
+        for i, s in enumerate(summaries, 1):
+            lines.append(f"### {i}. {s.title}\n")
+            if s.background:
+                lines.append(f"**背景**: {s.background}\n")
+            if s.core_method:
+                lines.append(f"**核心方法**: {s.core_method}\n")
+            if s.key_contributions:
+                lines.append("**主要贡献**:")
+                for c in s.key_contributions:
+                    lines.append(f"- {c}")
+                lines.append("")
+            if s.limitations:
+                lines.append("**局限性**:")
+                for l in s.limitations:
+                    lines.append(f"- {l}")
+                lines.append("")
+            if s.datasets:
+                lines.append(f"**数据集**: {', '.join(s.datasets)}\n")
+            if s.results:
+                lines.append(f"**实验结果**: {s.results}\n")
+
         if roadmap:
-            lines.append("\n## 技术演进路线\n")
+            lines.append("\n## 二、技术演进路线\n")
             lines.append(f"**研究领域**: {roadmap.topic}\n")
 
             if roadmap.timeline:
@@ -85,7 +107,7 @@ class MiningEngine:
                 lines.append("")
 
         if innovations:
-            lines.append("\n## 创新方向建议\n")
+            lines.append("\n## 三、创新方向建议\n")
             for i, inn in enumerate(innovations, 1):
                 lines.append(f"### {i}. {inn.title}\n")
                 lines.append(f"**描述**: {inn.description}\n")
@@ -98,28 +120,6 @@ class MiningEngine:
                     for p in inn.related_papers:
                         lines.append(f"- {p}")
                 lines.append("")
-
-        lines.append("\n## 文献结构化摘要\n")
-        for i, s in enumerate(summaries, 1):
-            lines.append(f"### {i}. {s.title}\n")
-            if s.background:
-                lines.append(f"**背景**: {s.background}\n")
-            if s.core_method:
-                lines.append(f"**核心方法**: {s.core_method}\n")
-            if s.key_contributions:
-                lines.append("**主要贡献**:")
-                for c in s.key_contributions:
-                    lines.append(f"- {c}")
-                lines.append("")
-            if s.limitations:
-                lines.append("**局限性**:")
-                for l in s.limitations:
-                    lines.append(f"- {l}")
-                lines.append("")
-            if s.datasets:
-                lines.append(f"**数据集**: {', '.join(s.datasets)}\n")
-            if s.results:
-                lines.append(f"**实验结果**: {s.results}\n")
 
         content = "\n".join(lines)
         with open(output_path, "w", encoding="utf-8") as f:
